@@ -33,7 +33,7 @@ void setup()
     delay(15000);
   
   }
-  if (valor_sensor =< 120)
+  if (valor_sensor =< 400)
   {
     
     delay(2000);
@@ -41,7 +41,7 @@ void setup()
      digitalWrite(led_verde,LOW);
     digitalWrite(rele,HIGH);
     digitalWrite(buzina,LOW);
-    delay(15000);
+    delay(10000);
     
   }
   else
