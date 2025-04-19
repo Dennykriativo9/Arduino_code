@@ -68,7 +68,7 @@ void loop()
   
   else {
     
-    digitalWrite(buzina, LOW); // Desliga o buzzer
+    digitalWrite(buzina, LOW);
     digitalWrite(vermelho,LOW);
     digitalWrite(verde,HIGH);
     lcd.setCursor(1,0);
