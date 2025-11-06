@@ -1,0 +1,191 @@
+#include <WiFi.h>                    // Inclui a biblioteca para manipulação de conexões WiFi
+#include <WebServer.h>               // Inclui a biblioteca para criar um servidor web
+#include <HTTPClient.h>              // Inclui a biblioteca para realizar requisições HTTP
+#include <WiFiClientSecure.h>         // Inclui a biblioteca para usar HTTPS (SSL/TLS)
+#include <DHT.h>                     // Inclui a biblioteca para o sensor de temperatura e umidade DHT11
+#include <ArduinoJson.h>             // Inclui a biblioteca para manipulação de dados JSON
+
+// Definições de pinos
+#define DHTPIN 4                     // Define o pino 4 como o pino de dados do sensor DHT11
+#define DHTTYPE DHT11                // Define o tipo do sensor como DHT11
+#define LED_SUCCESS 2                // Define o pino 2 para o LED de sucesso
+#define LED_ERROR 15                 // Define o pino 15 para o LED de erro
+
+// Configurações WiFi
+const char *ssid = "Tecmicro_Tech";      // Define o SSID da rede WiFi
+const char *password = "Tecmicro@lab2025"; // Define a senha da rede WiFi
+
+// Configuração da API do Gemini
+const String apiKey = "AIzaSy...";   // Chave de API do Gemini (abreviada por questões de segurança)
+const String endpoint = "https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent"; // URL da API
+
+// Instâncias do sensor e servidor web
+DHT dht(DHTPIN, DHTTYPE);            // Cria uma instância do sensor DHT11
+WebServer server(80);                // Cria uma instância do servidor web rodando na porta 80
+
+// Estrutura para armazenar os dados coletados do sensor
+struct SensorData {
+  String umidade;                    // Armazena a umidade coletada
+  String temperatura;                // Armazena a temperatura coletada
+};
+
+std::vector<SensorData> dadosColetados; // Vetor para armazenar vários dados coletados
+
+// Função para formatar a string para HTML
+String formatarStringParaHTML(String texto) {
+  // Substituir asteriscos duplos (**) por tags <strong> para negrito
+  texto.replace("**", "<strong>");
+
+  // Alternar entre abertura e fechamento da tag <strong>
+  bool abrirTag = true;
+  while (texto.indexOf("<strong>") != -1) {
+    if (abrirTag) {
+      texto.replace("<strong>", "<strong>");
+    } else {
+      texto.replace("<strong>", "</strong>");
+    }
+    abrirTag = !abrirTag;
+  }
+
+  // Substituir '\n' por '<br>' para quebras de linha
+  texto.replace("\n", "<br>");
+
+  return texto;                      // Retorna a string formatada
+}
+
+// Função para coletar dados do sensor DHT11
+void coletarDados() {
+  float h = dht.readHumidity();      // Lê a umidade do sensor
+  float t = dht.readTemperature();   // Lê a temperatura do sensor
+  
+  if (isnan(h) || isnan(t)) {        // Verifica se houve erro na leitura
+    digitalWrite(LED_ERROR, HIGH);   // Acende o LED de erro
+    Serial.println("Erro ao ler o sensor DHT11");
+    return;                          // Sai da função se houver erro
+  } else {
+    digitalWrite(LED_SUCCESS, HIGH); // Acende o LED de sucesso
+    SensorData data;                 // Cria uma nova estrutura de dados
+    data.umidade = String(h, 2);     // Armazena a umidade com 2 casas decimais
+    data.temperatura = String(t, 2); // Armazena a temperatura com 2 casas decimais
+    dadosColetados.push_back(data);  // Adiciona os dados coletados ao vetor
+  }
+  digitalWrite(LED_ERROR, LOW);      // Apaga o LED de erro
+}
+
+// Função para enviar dados à API do Gemini
+String enviarDadosParaGemini() {
+  WiFiClientSecure client;           // Cria um cliente seguro para HTTPS
+  HTTPClient http;                   // Cria uma instância HTTP para a requisição
+  client.setTimeout(120000);         // Define o timeout para 2 minutos
+  client.setInsecure();              // Desabilita a verificação SSL (para testes)
+
+  http.begin(client, endpoint);      // Inicia a requisição HTTP com o endpoint da API
+  http.addHeader("Content-Type", "application/json"); // Define o cabeçalho do tipo de conteúdo
+  http.addHeader("x-goog-api-key", apiKey);           // Define o cabeçalho da chave da API
+  
+  // Cria o corpo da requisição com os dados coletados
+  String jsonRequest = "{\"contents\": [{\"role\": \"user\", \"parts\": [{\"text\": \"Baseado nos seguintes dados de temperatura e umidade do ambiente: [";
+  for (auto& data : dadosColetados) { // Adiciona cada par de dados de temperatura e umidade ao JSON
+    jsonRequest += "{umidade:" + data.umidade + ",temperatura:" + data.temperatura + "},";
+  }
+  jsonRequest.remove(jsonRequest.length() - 1);       // Remove a última vírgula do JSON
+  jsonRequest += "], Me retorne uma análise do ambiente com as seguintes informações no formato de texto corrido: Alerta de extremidade de temperatura (muito alta ou muito baixa), alerta de extremidade de umidade (muito alta ou muito baixa), umidade média (calculada de acordo com os dados fornecidos), temperatura média (calculada de acordo com os dados fornecidos), recomendação de temperatura e umidade mais adequadas, e dicas para um ambiente agradável.\"}]}]}"; // Finaliza o JSON
+  Serial.println(jsonRequest);       // Exibe o corpo da requisição no Serial
+  int httpResponseCode = http.POST(jsonRequest); // Envia a requisição POST
+  String payload = http.getString(); // Armazena a resposta da API
+  Serial.println(payload);           // Exibe a resposta no Serial
+  http.end();                        // Encerra a requisição HTTP
+
+  if (httpResponseCode == 200) {     // Se a resposta for sucesso (código 200)
+    dadosColetados.clear();          // Limpa os dados coletados após o envio
+
+    // Usando ArduinoJson para extrair a resposta
+    StaticJsonDocument<200> doc;     // Cria um documento JSON estático
+    DeserializationError error = deserializeJson(doc, payload); // Deserializa a resposta JSON
+    if (!error) {                    // Se não houver erro na deserialização
+      const char* response = doc["candidates"][0]["content"]["parts"][0]["text"]; // Extrai o texto de resposta
+      return response;               // Retorna o texto da resposta
+    } else {
+      return "Erro ao analisar JSON."; // Retorna erro de análise JSON
+      digitalWrite(LED_ERROR, HIGH);  // Acende o LED de erro
+    }
+  } else {
+    return "Erro ao se comunicar com a API Gemini"; // Retorna erro de comunicação
+    digitalWrite(LED_ERROR, HIGH); // Acende o LED de erro
+  }
+}
+
+// Função para criar a página HTML com o relatório
+String gerarRelatorioWeb(String response) {
+  String html = "<!DOCTYPE html><html lang='pt'><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1.0'>"; // Cabeçalho HTML
+  html += "<title>Relatório do Ambiente</title></head><body>"; // Título da página
+  html += "<h1>Relatório do Ambiente</h1>"; // Cabeçalho H1
+  
+  // Exibe os dados retornados pela API
+  if (response != "") {              // Se houver resposta da API
+    html += "<p>" + formatarStringParaHTML(response) + "</p>"; // Formata e exibe a resposta
+  } else {
+    html += "<p>Nenhum dado coletado até o momento.</p>"; // Caso não haja resposta
+  }
+
+  html += "</body></html>";          // Finaliza o corpo HTML
+  return html;                       // Retorna o HTML gerado
+}
+
+// Rota para exibir o relatório
+void handleRelatorio() {
+  String response = enviarDadosParaGemini(); // Envia os dados para a API e recebe a resposta
+  server.send(200, "text/html", gerarRelatorioWeb(response)); // Envia a resposta HTML ao cliente
+}
+
+// Função para configuração do ESP32
+void setup() {
+  Serial.begin(115200);              // Inicia a comunicação serial a 115200 bps
+  
+  // Inicializa o sensor DHT11
+  dht.begin();                       // Inicia o sensor DHT11
+
+  // Configura pinos dos LEDs
+  pinMode(LED_SUCCESS, OUTPUT);      // Define o pino do LED de sucesso como saída
+  pinMode(LED_ERROR, OUTPUT);        // Define o pino do LED de erro como saída
+  
+  // Conecta ao WiFi
+  WiFi.begin(ssid, password);        // Inicia a conexão WiFi
+  while (WiFi.status() != WL_CONNECTED) { // Aguarda até conectar ao WiFi
+    delay(1000);                     // Espera 1 segundo
+    Serial.println("Conectando ao WiFi...");
+  }
+  Serial.println("Conectado ao WiFi!"); // Exibe mensagem de sucesso na conexão
+
+  // Exibe o IP do ESP32 após a conexão com o Wi-Fi
+  Serial.print("Endereço IP do ESP32: ");
+  Serial.println(WiFi.localIP());    // Mostra o endereço IP do ESP32
+
+  // Inicializa servidor web
+  server.on("/relatorio", handleRelatorio); // Define a rota para acessar o relatório
+  server.begin();                   // Inicia o servidor web
+  Serial.println("Servidor web iniciado");
+
+  // Coleta inicial de dados
+  coletarDados();                    // Coleta dados logo após a inicialização
+}
+
+// Função para rodar continuamente
+void loop() {
+   server.handleClient();            // Mantém o servidor web ativo
+  
+  static unsigned long ultimoEnvio = 0;     // Variável para controlar o tempo de envio
+  static unsigned long ultimaColeta = 0;    // Variável para controlar o tempo de coleta
+
+  // Coletar dados a cada 30 segundos
+  if (millis() - ultimaColeta > 30000) { // Se 30 segundos se passaram desde a última coleta
+    coletarDados();                      // Coleta dados do sensor
+    ultimaColeta = millis();             // Atualiza o tempo da última coleta
+  }
+
+  // Enviar dados a cada 2 minutos
+  if (millis() - ultimoEnvio > 120000) { // Se 2 minutos se passaram desde o último envio
+    enviarDadosParaGemini();             // Envia os dados para a API
+    ultimoEnvio = millis();              // Atualiza o tempo do último envio
+  }
+}
