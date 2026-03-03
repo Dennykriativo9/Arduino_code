@@ -12,7 +12,7 @@
 #define LED_ERROR 15                 // Define o pino 15 para o LED de erro
 
 // Configurações WiFi
-const char *ssid = "Tecmicro_Tech";      // Define o SSID da rede WiFi
+const char *ssid = "XXXXXXX";      // Define o SSID da rede WiFi
 const char *password = "Tecmicro@lab2025"; // Define a senha da rede WiFi
 
 // Configuração da API do Gemini
